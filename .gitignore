@@ -1,0 +1,19 @@
+# Environment & secrets
+.env
+
+# Runtime data
+data/
+__pycache__/
+*.pyc
+
+# Documentation (private)
+prd.md
+CLAUDE.md
+
+# Backups
+*.backup
+backups/
+
+# OS
+.DS_Store
+Thumbs.db
