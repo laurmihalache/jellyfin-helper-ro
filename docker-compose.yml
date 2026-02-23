@@ -1,8 +1,7 @@
-version: '3.8'
-
 services:
   jellyfin-helper-ro:
     build: .
+    image: jellyfin-helper-ro
     container_name: jellyfin-helper-ro
     restart: "no"
     env_file: .env
