@@ -89,7 +89,7 @@ Funcția `_is_latin_text()` verifică automat că titlurile TMDB românești fol
 
 Fiecare folder se procesează **independent** — o eroare într-un folder nu afectează restul.
 
-Containerul rulează o singură dată, procesează totul, apoi se oprește. Programează-l cu cron sau rulează-l manual.
+Containerul rulează o singură dată, procesează totul, apoi se oprește. Poate fi declanșat de cron, de un restart Jellyfin, sau poate rula permanent pe interval fix.
 
 ## Cerințe
 
@@ -132,9 +132,13 @@ volumes:
 docker compose up --build
 ```
 
-### 4. (Opțional) Programare automată
+### 4. (Opțional) Alege modul de execuție
 
-Adaugă un cron job pentru rulare periodică:
+Trei moduri de automatizare — alege ce se potrivește configurației tale:
+
+---
+
+#### Varianta A — Cron (cel mai simplu)
 
 ```bash
 crontab -e
@@ -145,6 +149,118 @@ Adaugă (rulează zilnic la ora 3):
 ```
 0 3 * * * cd /calea/spre/jellyfin-helper-ro && docker compose up --build >> /var/log/jellyfin-helper-ro.log 2>&1
 ```
+
+---
+
+#### Varianta B — Declanșare automată la restart Jellyfin (NAS / self-hosted)
+
+Rulează helper-ul automat de fiecare dată când Jellyfin pornește sau repornește — ideal pentru NAS unde Jellyfin se actualizează frecvent.
+
+**Cum funcționează:** Un proces `monitor.py` monitorizează evenimentele Docker și apelează `trigger.sh` când detectează pornirea Jellyfin. Un serviciu systemd ține monitorul activ permanent.
+
+**1. Creează `monitor.py`** (lângă `docker-compose.yml`):
+
+```python
+#!/usr/bin/env python3
+"""Monitorizează containerul Jellyfin și declanșează helper-ul la restart."""
+import subprocess, time, logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+log = logging.getLogger(__name__)
+log.info("Jellyfin Helper Monitor pornit")
+
+last_trigger = 0
+process = subprocess.Popen(
+    ['docker', 'events', '--filter', 'type=container',
+     '--filter', 'container=jellyfin', '--format', '{{.Action}}'],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
+)
+
+try:
+    for line in process.stdout:
+        action = line.strip()
+        if action in ['start', 'restart']:
+            now = time.time()
+            if now - last_trigger < 30:   # debounce: ignoră evenimente în 30s
+                continue
+            last_trigger = now
+            log.info(f"Jellyfin {action} detectat — declanșez helper în 5s")
+            time.sleep(5)
+            subprocess.run(['/calea/spre/jellyfin-helper-ro/trigger.sh'], capture_output=True, text=True)
+            log.info("Helper declanșat")
+except KeyboardInterrupt:
+    log.info("Monitor oprit")
+finally:
+    process.terminate()
+```
+
+**2. Creează `trigger.sh`** (lângă `docker-compose.yml`, `chmod +x trigger.sh`):
+
+```bash
+#!/bin/bash
+cd /calea/spre/jellyfin-helper-ro && docker compose up --build -d
+```
+
+**3. Creează serviciu systemd** (`/etc/systemd/system/jellyfin-helper-trigger.service`):
+
+```ini
+[Unit]
+Description=Jellyfin Helper Trigger Monitor
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=UTILIZATORUL_TAU
+ExecStart=/usr/bin/python3 /calea/spre/jellyfin-helper-ro/monitor.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload
+systemctl enable --now jellyfin-helper-trigger.service
+```
+
+**Lanțul de declanșare:**
+```
+Jellyfin pornește/repornește
+    → monitor.py detectează eveniment Docker
+        → pauză 5s (așteptăm să termine Jellyfin boot-ul)
+            → trigger.sh rulează docker compose up --build -d
+                → containerul jellyfin-helper procesează biblioteca și se oprește
+```
+
+---
+
+#### Varianta C — Container permanent (fără trigger extern, fără cron)
+
+Containerul rulează continuu și re-execută pipeline-ul la interval fix. Nu necesită systemd sau cron — doar Docker.
+
+Modifică `docker-compose.yml` — adaugă `restart` și suprascrie `entrypoint`:
+
+```yaml
+services:
+  jellyfin-helper:
+    build: .
+    image: jellyfin-helper-ro
+    container_name: jellyfin-helper-ro
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "while true; do python /app/main.py; sleep ${SCAN_INTERVAL_HOURS:-6}h; done"]
+    volumes:
+      - /calea/spre/filme:/media/movies:rw
+      - /calea/spre/seriale:/media/shows:rw
+      - ./data:/app/data:rw
+    env_file:
+      - .env
+    environment:
+      - SCAN_INTERVAL_HOURS=6   # re-scanează la fiecare 6 ore
+```
+
+Containerul va rula pipeline-ul complet, va dormi `SCAN_INTERVAL_HOURS` ore, apoi va repeta la infinit.
 
 ## Configurare
 
