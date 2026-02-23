@@ -1,5 +1,7 @@
 # Jellyfin Helper RO 🇷🇴
 
+![Version](https://img.shields.io/badge/version-0.8.2-blue)
+
 Versiune românească a [jellyfin-helper](https://github.com/laurmihalache/jellyfin-helper) — manager automat de bibliotecă media pentru **Jellyfin**, optimizat pentru utilizatori români.
 
 Containerul Docker scanează folderele de filmé și seriale, apoi automat:
